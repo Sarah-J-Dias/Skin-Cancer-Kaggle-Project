@@ -1,0 +1,219 @@
+---
+title: "STATS 101C Final Kaggle Project"
+author: "Melody Mao, Elizabeth Jiang, Diandian Shi, Sarah Dias"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(missRanger)
+library(ranger)
+library(car)
+library(splines)
+library(dplyr)
+library(MASS)
+library(glmnet)
+library(mice)
+library(DescTools)
+library(caret)
+```
+
+### Data Preprocessing
+
+```{r}
+# loading data
+cancer_train <- read.csv("SkinCancerTrain.csv", row.names = 1, 
+                         stringsAsFactors = TRUE)
+cancer_test <- read.csv("SkinCancerTestNoY.csv", row.names = 1,
+                        stringsAsFactors = TRUE)
+wrong_vars <- c("sunscreen_spf", "outdoor_job", "zip_code_last_digit")
+cancer_train[, wrong_vars] <- lapply(cancer_train[, wrong_vars], as.factor)
+cancer_test[, wrong_vars] <- lapply(cancer_test[, wrong_vars], as.factor)
+# finding numerical vs. categorical predictors
+numerical_preds <- names(cancer_test)[sapply(cancer_test, is.numeric)]
+categorical_preds <- names(cancer_test)[sapply(cancer_test, is.factor)]
+```
+
+### Missing Value Imputation
+
+```{r}
+cancer_train_imputed <- mice(cancer_train, method = "pmm", m = 7, maxit = 3, seed = 123)
+cancer_train_imputed_df <- complete(cancer_train_imputed, 2)
+# benchmarking on full LR model
+lr_fit <- glm(Cancer ~ ., data = cancer_train_imputed_df, family = binomial)
+lr_train_pred <- predict(lr_fit, cancer_train_imputed_df, type = "response")
+lr_train_class <- ifelse(lr_train_pred > 0.5, "Malignant", "Benign")
+mean(lr_train_class == cancer_train$Cancer)
+prop.table(table(lr_train_class))
+# imputing test
+cancer_test$Cancer <- factor(NA, levels = c("Benign", "Malignant"))
+cancer_test_imputed <- mice.mids(cancer_train_imputed, 
+                                 newdata = cancer_test, 
+                                 m = 5)
+lr_test_pred <- as.matrix(sapply(1:7, function(x) {
+  df <- complete(cancer_test_imputed, x)
+  predict(lr_fit, df, type = "response")
+}))
+lr_test_pred_avg <- as.vector(apply(lr_test_pred, 1, mean))
+lr_test_class <- ifelse(lr_test_pred_avg > 0.5, "Malignant", "Benign")
+prop.table(table(lr_test_class))
+```
+
+### Stepwise Regression
+
+```{r}
+fit <- glm(Cancer ~ ., data = cancer_train_imputed, family = binomial())
+forward_AIC <- step(lr_fit, direction = "forward", data = cancer_train_imputed)
+```
+
+### Elastic Net
+
+```{r}
+set.seed(123)
+x_train <- model.matrix(Cancer ~ age + family_history + skin_tone + 
+                          sunscreen_freq + avg_daily_uv + immunosuppressed +
+                          number_of_lesions + sunburns_last_year + outdoor_job +
+                          tanning_bed_use + clothing_protection + hat_use +
+                          skin_photosensitivity + lesion_size_mm + urban_rural + 
+                          years_lived_at_address + desk_height_cm + 
+                          uses_smartwatch + sunscreen_spf + income, 
+                        data = cancer_train_imputed_df)[, -1]
+y_train <- as.numeric(cancer_train_imputed_df$Cancer == "Malignant")
+tr_control <- trainControl(
+  method = "cv", # Or "repeatedcv", "boot", etc.
+  number = 10,   # Number of folds for cross-validation
+  classProbs = TRUE, # This is the crucial setting
+  summaryFunction = twoClassSummary # For ROC-based metrics
+)
+
+elastic_fit <- train(x = x_train, y = cancer_train_imputed_df$Cancer,
+                     method = "glmnet",
+                     metric = "ROC",
+                     trControl = tr_control)
+
+elastic_model <- glmnet(
+  x_train, y_train,
+  alpha = 0.1,
+  lambda = 0.001406607,
+  family = "binomial"
+)
+
+# training prediction validation
+elastic_train_pred <- predict(elastic_model, newx = x_train, type = "response")
+elastic_test_class <- ifelse(elastic_train_pred > 0.5, "Malignant", "Benign")
+mean(elastic_test_class == cancer_train$Cancer)
+prop.table(table(elastic_test_class))
+
+# testing prediction
+elastic_test_pred <- as.matrix(sapply(1:7, function(x) {
+  df <- complete(cancer_test_imputed, x)
+  df[, c("sunscreen_spf", "zip_code_last_digit")] <- lapply(
+    df[, c("sunscreen_spf", "zip_code_last_digit")], as.numeric)
+  x_test <- model.matrix(Cancer ~ age + family_history + skin_tone + 
+                          sunscreen_freq + avg_daily_uv + immunosuppressed +
+                          number_of_lesions + sunburns_last_year + outdoor_job +
+                          tanning_bed_use + clothing_protection + hat_use +
+                          skin_photosensitivity + lesion_size_mm + urban_rural + 
+                          years_lived_at_address + desk_height_cm + 
+                          uses_smartwatch + sunscreen_spf + income, df)[, -1]
+  predict(elastic_model, x_test, type = "response")
+}))
+elastic_test_pred_avg <- as.vector(apply(elastic_test_pred, 1, mean))
+elastic_test_class <- ifelse(elastic_test_pred_avg > 0.5, "Malignant", "Benign")
+prop.table(table(elastic_test_class))
+```
+
+
+### Subset LR Models
+```{r}
+# manual stepwise
+lr_fit_sub <- glm(Cancer ~ . - favorite_color - favorite_cuisine - music_genre - phone_brand -
+                    preferred_shoe_type - pets - access_to_nude_beach - outdoor_job, 
+                  data = cancer_train_imputed_df, family = binomial)
+# forwards stepwise aic selected variables
+lr_fit_aic <- glm(Cancer ~ age + family_history + skin_tone + 
+                    sunscreen_freq  + immunosuppressed +
+                    outdoor_job + PC1 + PC2 + PC3 +
+                    tanning_bed_use + clothing_protection + hat_use +
+                    skin_photosensitivity + lesion_size_mm +
+                    years_lived_at_address + desk_height_cm + 
+                    uses_smartwatch + sunscreen_spf + income, 
+                  data = cancer_train_imputed_df, family = binomial)
+lr_train_pred <- predict(lr_fit_aic, cancer_train_imputed_df, type = "response")
+lr_train_class <- ifelse(lr_train_pred > 0.5, "Malignant", "Benign")
+mean(lr_train_class == cancer_train$Cancer)
+lr_test_pred <- as.matrix(sapply(1:7, function(x) {
+  df <- complete(cancer_test_imputed, x)
+  df <- cbind(df, run_pca(df, c("number_of_lesions", "avg_daily_uv",
+                                "sunburns_last_year")))
+  df[, c("sunscreen_spf", "zip_code_last_digit")] <- lapply(
+    df[, c("sunscreen_spf", "zip_code_last_digit")],
+    as.numeric)
+  predict(lr_fit_aic, df, type = "response")
+}))
+lr_test_pred_avg <- as.vector(apply(lr_test_pred, 1, mean))
+lr_test_class <- ifelse(lr_test_pred_avg > 0.5, "Malignant", "Benign")
+prop.table(table(lr_test_class))
+```
+
+### Random Forest Model
+
+```{r}
+tune_rf <- tuneRF(
+  x = cancer_train_imputed_df %>% dplyr::select(c(age, family_history, skin_tone,
+                                                  sunscreen_freq, avg_daily_uv, 
+                                                  immunosuppressed, 
+                                                  number_of_lesions, 
+                                                  sunburns_last_year, outdoor_job,
+                                                  tanning_bed_use, 
+                                                  clothing_protection, hat_use, 
+                                                  skin_photosensitivity, 
+                                                  lesion_size_mm, uses_smartwatch, 
+                                                  sunscreen_spf, income)),
+  y = cancer_train_imputed_df$Cancer,
+  stepFactor = 1.5,
+  improve = 0.01,
+  trace = TRUE
+)
+
+rf_model <- randomForest(Cancer ~ age + family_history + skin_tone + 
+                          sunscreen_freq + avg_daily_uv + immunosuppressed +
+                          number_of_lesions + sunburns_last_year + outdoor_job +
+                          tanning_bed_use + clothing_protection + hat_use +
+                          skin_photosensitivity + lesion_size_mm +  
+                          uses_smartwatch + sunscreen_spf + income, 
+                         data = cancer_train_imputed_df, 
+                         mtry = 7,
+                         ntree = 500,
+                         do.trace = TRUE,
+                         importance = TRUE)
+importance(rf_model)
+rf_train_pred <- as.vector(predict(rf_model, type = "prob")[, "Malignant"])
+rf_train_class <- ifelse(rf_train_pred > 0.511, "Malignant", "Benign")
+prop.table(table(rf_train_class))
+prop.table(table(cancer_train$Cancer))
+mean(rf_train_class == cancer_train$Cancer)
+
+rf_test_pred <- as.matrix(sapply(1:5, function(x) {
+  df <- complete(cancer_test_imputed, x)
+  df[, c("sunscreen_spf", "zip_code_last_digit")] <- lapply(
+    df[, c("sunscreen_spf", "zip_code_last_digit")], as.numeric)
+  as.vector(predict(rf_model, newdata = df, type = "prob")[, "Malignant"])
+}))
+rf_test_pred_avg <- as.vector(apply(rf_test_pred, 1, mean))
+rf_test_class <- ifelse(rf_test_pred_avg > 0.511, "Malignant", "Benign")
+prop.table(table(rf_test_class))
+```
+
+### Final Mode Aggregation
+
+```{r}
+pred1 <- read.csv("lrsub_mice4.csv")
+pred2 <- read.csv("lr_mice_forward_aic.csv")
+pred3 <- read.csv("ridge_glmnet_mice_avg.csv")
+pred_df <- data.frame(pred1$Cancer, pred2$Cancer, pred3$Cancer)
+pred_df_uncertain <- pred_df[apply(pred_df, 1, 
+                                   function(x) length(unique(x)) != 1),]
+mode_pred <- as.vector(apply(pred_df, 1, Mode))
+```
+
