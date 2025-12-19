@@ -7,11 +7,16 @@ This repository contains a skin cancer (Benign/Malignant) classification project
 - Feature selection (stepwise regression)
 - Model training and fine-tuning
 
-## Models Used
-- Logistic Regression (GLM & glmnet)
+## Models Used in Final RMD
+- Logistic Regression (GLM)
 - Linear Discriminant Analysis (LDA)
 - Random Forest
 - Ensemble models
+
+## Other models tried but not in Final RMD
+- XGboost
+- Catboost
+- GlMNET
 
 ## Files
 - 📄 **Predicting Skin Cancer Final Paper (PDF)**
@@ -19,5 +24,5 @@ This repository contains a skin cancer (Benign/Malignant) classification project
 - 💻 **R Markdown file** containing full analysis and code
 
 ## Results
-Our final ensemble model achieved a final predictive performance of 0.60725 and ranked 5th in the Kaggle competition.
+Our final ensemble model achieved a final predictive performance of 0.60725 and ranked 5th in the Kaggle competition. https://www.kaggle.com/competitions/predicting-skin-cancer-status
 
