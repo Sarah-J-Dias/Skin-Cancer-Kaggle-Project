@@ -7,16 +7,16 @@ This repository contains a skin cancer (Benign/Malignant) classification project
 - Feature selection (stepwise regression)
 - Model training and fine-tuning
 
-## Models Used in Final RMD
+## Models Used in Final Analysis RMD file
 - Logistic Regression (GLM)
 - Linear Discriminant Analysis (LDA)
 - Random Forest
 - Ensemble models
 
-## Other models tried but not in Final RMD
+## Other models tried but not in Final Analysis RMD
 - XGboost
 - Catboost
-- GlMNET
+- GLMNET
 
 ## Files
 - 📄 **Predicting Skin Cancer Final Paper (PDF)**
